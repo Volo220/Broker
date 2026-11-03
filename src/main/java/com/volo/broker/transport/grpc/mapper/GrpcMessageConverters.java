@@ -10,8 +10,8 @@ import com.volo.broker.broker.command.model.PublishCommand;
 import com.volo.broker.broker.command.model.PublishResult;
 import com.volo.broker.broker.error.BrokerErrorCode;
 import com.volo.broker.broker.error.BrokerException;
+import com.volo.broker.broker.message.Payload;
 import com.volo.broker.broker.message.QueuedMessage;
-import com.google.protobuf.ByteString;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -32,7 +32,7 @@ public final class GrpcMessageConverters {
         return new PublishCommand(
                 action.getClientPublishId(),
                 action.getRoutingKey(),
-                action.getPayload().toByteArray(),
+                Payload.of(action.getPayload()),
                 sanitizeHeaders(action.getHeadersMap())
         );
     }
@@ -76,7 +76,7 @@ public final class GrpcMessageConverters {
     public static Message toProtoMessage(QueuedMessage message) {
         Message.Builder builder = Message.newBuilder()
                 .setId(message.getMessageId())
-                .setPayload(ByteString.copyFrom(message.getPayload()))
+                .setPayload(message.getPayload().toByteString())
                 .setTimestamp(message.getCreatedAt())
                 .putAllHeaders(message.getHeaders());
 

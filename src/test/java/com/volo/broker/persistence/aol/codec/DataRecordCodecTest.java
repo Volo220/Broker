@@ -66,7 +66,7 @@ class DataRecordCodecTest {
             DecodedRecord result = codec.decode(codec.encode(original, 10_000L));
 
             assertThat(result.queueOffset()).isEqualTo(10_000L);
-            assertThat(result.message().getPayload()).isEqualTo(payload);
+            assertThat(result.message().getPayload().toByteArray()).isEqualTo(payload);
         }
 
         @Test
@@ -89,7 +89,7 @@ class DataRecordCodecTest {
 
             DecodedRecord result = codec.decode(codec.encode(original, 9L));
 
-            assertThat(result.message().getPayload()).isEmpty();
+            assertThat(result.message().getPayload().isEmpty()).isTrue();
         }
 
         @Test

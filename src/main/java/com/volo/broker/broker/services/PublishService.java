@@ -185,7 +185,7 @@ public class PublishService {
             throw new IllegalArgumentException("routingKey is required");
         }
 
-        if (command.payload().length == 0) {
+        if (command.payload().isEmpty()) {
             throw new IllegalArgumentException("payload must not be empty");
         }
     }

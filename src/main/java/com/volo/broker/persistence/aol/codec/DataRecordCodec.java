@@ -1,5 +1,6 @@
 package com.volo.broker.persistence.aol.codec;
 
+import com.volo.broker.broker.message.Payload;
 import com.volo.broker.broker.message.QueuedMessage;
 
 import java.nio.ByteBuffer;
@@ -46,14 +47,14 @@ public final class DataRecordCodec {
 
         byte[] routingKeyBytes = toUtf8(message.getRoutingKey());
         EncodedHeaders encodedHeaders = encodeHeaders(message.getHeaders());
-        byte[] payload = message.getPayload();
+        Payload payload = message.getPayload();
 
         validateLengths(routingKeyBytes, message.getHeaders(), encodedHeaders);
 
         int bodySize = FIXED_BODY_SIZE
                 + routingKeyBytes.length
                 + encodedHeaders.totalBytes()
-                + payload.length
+                + payload.size()
                 + CRC_SIZE;
 
         ByteBuffer buf = ByteBuffer.allocate(RECORD_LENGTH_FIELD_SIZE + bodySize);
@@ -71,7 +72,7 @@ public final class DataRecordCodec {
         buf.putInt(message.getDeliveryAttempt());
         buf.putShort((short) routingKeyBytes.length);
         buf.putShort((short) message.getHeaders().size());
-        buf.putInt(payload.length);
+        buf.putInt(payload.size());
 
         buf.put(routingKeyBytes);
 
@@ -82,7 +83,7 @@ public final class DataRecordCodec {
             buf.put(entry.valBytes());
         }
 
-        buf.put(payload);
+        payload.writeTo(buf);
 
         int crcEnd = buf.position();
         buf.flip();
@@ -154,7 +155,7 @@ public final class DataRecordCodec {
         }
 
         QueuedMessage message = new QueuedMessage(
-                messageId, payload, headers, routingKey,
+                messageId, Payload.wrap(payload), headers, routingKey,
                 createdAt, redelivered, deliveryAttempts);
 
         return new DecodedRecord(queueOffset, message);
@@ -177,7 +178,7 @@ public final class DataRecordCodec {
                 + FIXED_BODY_SIZE
                 + toUtf8(message.getRoutingKey()).length
                 + headersBytes
-                + message.getPayload().length
+                + message.getPayload().size()
                 + CRC_SIZE;
     }
 

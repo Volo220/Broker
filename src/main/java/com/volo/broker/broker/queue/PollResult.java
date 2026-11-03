@@ -6,29 +6,64 @@ import com.volo.broker.broker.message.QueuedMessage;
 import java.util.Objects;
 import java.util.Optional;
 
-public record PollResult(
-        Optional<QueuedMessage> message,
-        FlowTransition transition
-) {
-    public PollResult {
-        Objects.requireNonNull(message, "message must not be null");
-        Objects.requireNonNull(transition, "transition must not be null");
+public final class PollResult {
+
+    private static final PollResult EMPTY_NONE = new PollResult(null, FlowTransition.NONE);
+
+    private final QueuedMessage message;
+    private final FlowTransition transition;
+
+    public PollResult(QueuedMessage message, FlowTransition transition) {
+        this.message = message;
+        this.transition = Objects.requireNonNull(transition, "transition must not be null");
     }
 
     public static PollResult empty() {
-        return new PollResult(Optional.empty(), FlowTransition.NONE);
+        return EMPTY_NONE;
     }
 
     public static PollResult empty(FlowTransition transition) {
-        return new PollResult(Optional.empty(), transition);
+        return transition == FlowTransition.NONE ? EMPTY_NONE : new PollResult(null, transition);
     }
 
     public static PollResult of(QueuedMessage message, FlowTransition transition) {
-        return new PollResult(Optional.of(message), transition);
+        return new PollResult(message, transition);
     }
 
     public static PollResult of(QueuedMessage message) {
-        return new PollResult(Optional.of(message), FlowTransition.NONE);
+        return new PollResult(message, FlowTransition.NONE);
+    }
+
+    public boolean hasMessage() {
+        return message != null;
+    }
+
+    public QueuedMessage messageOrNull() {
+        return message;
+    }
+
+    public Optional<QueuedMessage> message() {
+        return Optional.ofNullable(message);
+    }
+
+    public FlowTransition transition() {
+        return transition;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof PollResult that)) return false;
+        return Objects.equals(message, that.message) && transition == that.transition;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(message, transition);
+    }
+
+    @Override
+    public String toString() {
+        return "PollResult[message=" + message + ", transition=" + transition + "]";
     }
 }
-

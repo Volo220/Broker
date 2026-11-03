@@ -25,8 +25,9 @@ class QueuedMessageTest {
         assertThat(redelivered.getMessageId()).isEqualTo(1L);
         assertThat(redelivered.isRedelivered()).isTrue();
         assertThat(redelivered.getDeliveryAttempt()).isEqualTo(1);
-        assertThat(redelivered.getPayload()).isEqualTo(message.getPayload());
-        assertThat(redelivered.getHeaders()).isEqualTo(message.getHeaders());
+        assertThat(redelivered.getPayload()).isSameAs(message.getPayload());
+        assertThat(redelivered.getHeaders()).isSameAs(message.getHeaders());
+        assertThat(redelivered.sizeBytes()).isEqualTo(message.sizeBytes());
     }
 
     @Test
@@ -60,6 +61,6 @@ class QueuedMessageTest {
 
         payload[0] = 'X';
 
-        assertThat(new String(message.getPayload())).isEqualTo("payload");
+        assertThat(new String(message.getPayload().toByteArray())).isEqualTo("payload");
     }
 }

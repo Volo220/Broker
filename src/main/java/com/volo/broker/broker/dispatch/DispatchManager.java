@@ -70,11 +70,10 @@ public class DispatchManager {
             }
 
             PollResult pollResult = queue.poll();
-            if (pollResult.message().isEmpty()) {
+            QueuedMessage message = pollResult.messageOrNull();
+            if (message == null) {
                 return;
             }
-
-            QueuedMessage message = pollResult.message().get();
 
             if (flowController != null) {
                 flowController.handleTransition(queue.queuePath(), pollResult.transition());

@@ -8,12 +8,32 @@ import lombok.Getter;
 public final class QueuedMessage {
 
     private final long messageId;
-    private final byte[] payload;
+    private final Payload payload;
     private final Map<String, String> headers;
     private final String routingKey;
     private final long createdAt;
     private final boolean redelivered;
     private final int deliveryAttempt;
+    private final int sizeBytes;
+
+    public QueuedMessage(
+            long messageId,
+            Payload payload,
+            Map<String, String> headers,
+            String routingKey,
+            long createdAt,
+            boolean redelivered,
+            int deliveryAttempt
+    ) {
+        this.messageId = messageId;
+        this.payload = payload == null ? Payload.empty() : payload;
+        this.headers = normalizeHeaders(headers);
+        this.routingKey = routingKey;
+        this.createdAt = createdAt;
+        this.redelivered = redelivered;
+        this.deliveryAttempt = Math.max(0, deliveryAttempt);
+        this.sizeBytes = computeSizeBytes(this.payload, this.headers);
+    }
 
     public QueuedMessage(
             long messageId,
@@ -24,13 +44,15 @@ public final class QueuedMessage {
             boolean redelivered,
             int deliveryAttempt
     ) {
-        this.messageId = messageId;
-        this.payload = payload == null ? new byte[0] : payload.clone();
-        this.headers = headers == null ? Map.of() : Map.copyOf(headers);
-        this.routingKey = routingKey;
-        this.createdAt = createdAt;
-        this.redelivered = redelivered;
-        this.deliveryAttempt = Math.max(0, deliveryAttempt);
+        this(
+                messageId,
+                payload == null || payload.length == 0 ? Payload.empty() : Payload.of(payload),
+                headers,
+                routingKey,
+                createdAt,
+                redelivered,
+                deliveryAttempt
+        );
     }
 
     public QueuedMessage asRedelivered() {
@@ -46,11 +68,23 @@ public final class QueuedMessage {
     }
 
     public int sizeBytes() {
-        int headersBytes = headers.entrySet()
-                .stream()
-                .mapToInt(entry -> entry.getKey().length() + entry.getValue().length())
-                .sum();
+        return sizeBytes;
+    }
 
-        return payload.length + headersBytes;
+    private static int computeSizeBytes(Payload payload, Map<String, String> headers) {
+        int headersBytes = 0;
+        if (!headers.isEmpty()) {
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                headersBytes += entry.getKey().length() + entry.getValue().length();
+            }
+        }
+        return payload.size() + headersBytes;
+    }
+
+    private static Map<String, String> normalizeHeaders(Map<String, String> headers) {
+        if (headers == null || headers.isEmpty()) {
+            return Map.of();
+        }
+        return Map.copyOf(headers);
     }
 }

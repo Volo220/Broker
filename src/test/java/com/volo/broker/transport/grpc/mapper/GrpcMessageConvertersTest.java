@@ -35,7 +35,7 @@ class GrpcMessageConvertersTest {
 
         assertThat(command.clientPublishId()).isEqualTo(1L);
         assertThat(command.routingKey()).isEqualTo("orders.created");
-        assertThat(new String(command.payload(), StandardCharsets.UTF_8)).isEqualTo("payload");
+        assertThat(new String(command.payload().toByteArray(), StandardCharsets.UTF_8)).isEqualTo("payload");
         assertThat(command.headers()).containsEntry("content-type", "text/plain");
     }
 
@@ -83,7 +83,7 @@ class GrpcMessageConvertersTest {
 
         assertEquals(1L, cmd.clientPublishId());
         assertEquals("test.key", cmd.routingKey());
-        assertArrayEquals(payload, cmd.payload());
+        assertArrayEquals(payload, cmd.payload().toByteArray());
         assertEquals("application/json", cmd.headers().get("content-type"));
     }
 
