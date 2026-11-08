@@ -13,6 +13,7 @@ broker:
     linger-micros: 1500
     ack-batch-size: 512
     ack-linger-micros: 4000
+    
   flow-control:
     enabled: true
     defaults:
@@ -25,11 +26,29 @@ broker:
       high-bytes: 1073741824
       low-bytes: 805306368
     resume-batch: 64
+
   publisher:
     keep-alive:
       timeout-ms: 30000
       check-period-ms: 5000
+
   consumer:
     keep-alive:
       timeout-ms: 30000
       check-period-ms: 5000
+
+  memory-sampler:
+    enabled: true
+    sample-interval-ms: 1000
+    csv:
+      enabled: true
+      file-path: logs/memory-metrics.csv
+      append: false
+    console:
+      enabled: true
+      interval-seconds: 5
+    metrics:
+      include-gc: true
+      include-direct-memory: true
+      include-threads: true
+      include-broker-queues: true

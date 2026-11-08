@@ -11,7 +11,7 @@ import com.volo.broker.broker.queue.InMemoryQueueManager;
 import com.volo.broker.broker.queue.QueueManager;
 
 @Configuration
-@EnableConfigurationProperties(FlowControlProperties.class)
+@EnableConfigurationProperties({FlowControlProperties.class, MemorySamplerProperties.class})
 public class Config {
     
     @Bean
