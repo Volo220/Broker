@@ -2,8 +2,8 @@ package com.volo.broker.diagnostics.memory;
 
 import com.volo.broker.broker.flow.GlobalMemoryGuard;
 import com.volo.broker.broker.queue.QueueManager;
-import com.volo.broker.config.FlowControlProperties;
 import com.volo.broker.config.MemorySamplerProperties;
+import com.volo.broker.diagnostics.memory.HostMemoryProvider.HostMemorySnapshot;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,15 +22,14 @@ class MemoryMetricsCollectorTest {
                 new MemorySamplerProperties.MetricsConfig(true, true, true, true)
         );
 
-        GlobalMemoryGuard guard = new GlobalMemoryGuard(
-                new FlowControlProperties(true, null, new FlowControlProperties.Global(1000L, 500L), 64)
-        );
+        GlobalMemoryGuard guard = new GlobalMemoryGuard(1000L, 500L);
         guard.recordBytesAdded(1024 * 1024);
 
         QueueManager queueManager = mock(QueueManager.class);
         when(queueManager.all()).thenReturn(java.util.List.of());
 
-        MemoryMetricsCollector collector = new MemoryMetricsCollector(props, guard, queueManager);
+        HostMemoryProvider hostMemoryProvider = () -> new HostMemorySnapshot(8_000_000_000L, 16_000_000_000L);
+        MemoryMetricsCollector collector = new MemoryMetricsCollector(props, hostMemoryProvider, guard, queueManager);
 
         MemoryMetricsSnapshot snapshot = collector.collect();
 
@@ -43,6 +42,8 @@ class MemoryMetricsCollectorTest {
         assertThat(snapshot.liveThreads()).isPositive();
         assertThat(snapshot.brokerReadyBytes()).isEqualTo(1024 * 1024);
         assertThat(snapshot.totalQueues()).isZero();
+        assertThat(snapshot.osFreeMemoryBytes()).isEqualTo(8_000_000_000L);
+        assertThat(snapshot.osTotalMemoryBytes()).isEqualTo(16_000_000_000L);
     }
 
     @Test
@@ -55,7 +56,7 @@ class MemoryMetricsCollectorTest {
                 new MemorySamplerProperties.MetricsConfig(false, false, false, false)
         );
 
-        MemoryMetricsCollector collector = new MemoryMetricsCollector(props, null, null);
+        MemoryMetricsCollector collector = new MemoryMetricsCollector(props, null, null, null);
 
         MemoryMetricsSnapshot snapshot = collector.collect();
 
@@ -65,6 +66,35 @@ class MemoryMetricsCollectorTest {
         assertThat(snapshot.liveThreads()).isEqualTo(-1);
         assertThat(snapshot.brokerReadyBytes()).isEqualTo(-1L);
         assertThat(snapshot.totalQueues()).isEqualTo(-1);
+        assertThat(snapshot.osFreeMemoryBytes()).isEqualTo(-1L);
+        assertThat(snapshot.osTotalMemoryBytes()).isEqualTo(-1L);
+    }
+
+    @Test
+    void collect_whenHostMemoryProviderFailsOrReturnsNull_setsUnavailableOsMemory() {
+        MemorySamplerProperties props = new MemorySamplerProperties(
+                true,
+                1000,
+                null,
+                null,
+                new MemorySamplerProperties.MetricsConfig(true, true, true, true)
+        );
+
+        MemoryMetricsCollector failingCollector = new MemoryMetricsCollector(
+                props,
+                () -> {
+                    throw new RuntimeException("provider failure");
+                },
+                null,
+                null
+        );
+        MemoryMetricsSnapshot failedSnapshot = failingCollector.collect();
+        assertThat(failedSnapshot.osFreeMemoryBytes()).isEqualTo(-1L);
+        assertThat(failedSnapshot.osTotalMemoryBytes()).isEqualTo(-1L);
+
+        MemoryMetricsCollector nullResultCollector = new MemoryMetricsCollector(props, () -> null, null, null);
+        MemoryMetricsSnapshot nullSnapshot = nullResultCollector.collect();
+        assertThat(nullSnapshot.osFreeMemoryBytes()).isEqualTo(-1L);
+        assertThat(nullSnapshot.osTotalMemoryBytes()).isEqualTo(-1L);
     }
 }
-

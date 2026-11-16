@@ -3,13 +3,11 @@ broker:
     base-dir: target/test-data/aol
   flow-control:
     enabled: true
-    defaults:
-      high-watermark-messages: 10000
-      low-watermark-messages: 5000
-      high-watermark-bytes: 67108864
-      low-watermark-bytes: 33554432
-      max-block-ms: 0
-    global:
-      high-bytes: 1073741824
-      low-bytes: 805306368
+    max-block-ms: 0
     resume-batch: 64
+    global:
+      high-ratio: 0.40
+      low-ratio-factor: 0.75
+      heap-pressure-threshold: 0.80
+      min-free-os-mb: 256
+      check-interval-ms: 500

@@ -48,11 +48,18 @@ public class PublisherFlowGate implements FlowGate {
         if (flowController != null && flowController.isAnyBlocked(routedQueues)) {
             if (state.compareAndSet(GateState.FLOWING, GateState.PAUSED)) {
                 pausedAtTimestamp.set(System.currentTimeMillis());
-                log.debug("Pausing publisher flow gate for queues: {}", routedQueues);
+                String reason;
+                if (flowController.isGlobalBlocked()) {
+                    String globalReason = flowController.globalBlockReason();
+                    reason = "GLOBAL_MEMORY_PRESSURE" + (globalReason.isBlank() ? "" : ": " + globalReason);
+                } else {
+                    reason = "QUEUE_WATERMARK:" + (routedQueues != null ? routedQueues : "[]");
+                }
+                log.debug("Pausing publisher flow gate for queues: {}, reason: {}", routedQueues, reason);
                 if (connection != null) {
                     connection.send(GrpcMessageConverters.toFlowControlNoticeResponse(
                             true,
-                            "QUEUE_WATERMARK:" + (routedQueues != null ? routedQueues : "[]")
+                            reason
                     ));
                 }
                 flowController.park(this, routedQueues);

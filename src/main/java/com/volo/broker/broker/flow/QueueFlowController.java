@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 public class QueueFlowController implements AutoCloseable {
@@ -16,45 +15,34 @@ public class QueueFlowController implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(QueueFlowController.class);
 
     private final ConcurrentHashMap<String, QueueFlowEntry> queues = new ConcurrentHashMap<>();
+    private final Set<FlowGate> globalWaiters = ConcurrentHashMap.newKeySet();
     private final GlobalMemoryGuard globalMemoryGuard;
     private final int resumeBatch;
     private final long defaultMaxBlockMs;
     private final ExecutorService resumeExecutor = Executors.newVirtualThreadPerTaskExecutor();
-    private final ScheduledExecutorService timeoutScheduler;
-
-    private final AtomicLong totalTransitionsToBlocked = new AtomicLong();
-    private final AtomicLong totalTransitionsToOpen = new AtomicLong();
-    private final AtomicLong overdueTimeoutRejections = new AtomicLong();
+    private final FlowTimeoutScheduler timeoutScheduler;
+    private final FlowControlMetrics metrics = new FlowControlMetrics();
 
     public QueueFlowController(GlobalMemoryGuard globalMemoryGuard, FlowControlProperties properties) {
         this.globalMemoryGuard = Objects.requireNonNull(globalMemoryGuard, "globalMemoryGuard must not be null");
         this.resumeBatch = properties != null && properties.resumeBatch() > 0 ? properties.resumeBatch() : 64;
-        this.defaultMaxBlockMs = properties != null && properties.defaults() != null ? properties.defaults().maxBlockMs() : 0;
-
-        this.timeoutScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "flow-control-timeout-checker");
-            t.setDaemon(true);
-            return t;
-        });
-        this.timeoutScheduler.scheduleAtFixedRate(this::checkOverdueGates, 200, 200, TimeUnit.MILLISECONDS);
+        this.defaultMaxBlockMs = properties != null ? properties.maxBlockMs() : 0;
+        this.timeoutScheduler = new FlowTimeoutScheduler(this::checkOverdueGates, 200L);
     }
 
     public boolean isAnyBlocked(Collection<String> queuePaths) {
         if (globalMemoryGuard.isBlocked()) {
             return true;
         }
-
         if (queuePaths == null || queuePaths.isEmpty()) {
             return false;
         }
-
         for (String queuePath : queuePaths) {
             QueueFlowEntry entry = queues.get(queuePath);
             if (entry != null && entry.state == FlowState.BLOCKED) {
                 return true;
             }
         }
-
         return false;
     }
 
@@ -72,6 +60,8 @@ public class QueueFlowController implements AutoCloseable {
             for (String queuePath : blockedQueuePaths) {
                 queues.computeIfAbsent(queuePath, k -> new QueueFlowEntry()).waiters.add(gate);
             }
+        } else {
+            globalWaiters.add(gate);
         }
 
         // Double-check to prevent lost wakeup
@@ -83,6 +73,7 @@ public class QueueFlowController implements AutoCloseable {
 
     public void unregister(FlowGate gate) {
         if (gate == null) return;
+        globalWaiters.remove(gate);
         for (QueueFlowEntry entry : queues.values()) {
             entry.waiters.remove(gate);
         }
@@ -104,82 +95,124 @@ public class QueueFlowController implements AutoCloseable {
 
         if (transition == FlowTransition.TO_BLOCKED) {
             entry.state = FlowState.BLOCKED;
-            totalTransitionsToBlocked.incrementAndGet();
+            metrics.recordBlocked();
             log.debug("Queue '{}' transitioned to BLOCKED (maxBlockMs={})", queuePath, entry.maxBlockMs);
         } else if (transition == FlowTransition.TO_OPEN) {
             entry.state = FlowState.OPEN;
-            totalTransitionsToOpen.incrementAndGet();
+            metrics.recordOpen();
             log.debug("Queue '{}' transitioned to OPEN. Resuming waiters...", queuePath);
-            wakeWaiters(entry);
+            wakeWaiters(entry.waiters);
         }
     }
 
     public void handleGlobalTransition(FlowTransition transition) {
         if (transition == FlowTransition.TO_OPEN) {
-            totalTransitionsToOpen.incrementAndGet();
+            metrics.recordOpen();
             log.debug("GlobalMemoryGuard transitioned to OPEN. Resuming all eligible waiters...");
-            for (QueueFlowEntry entry : queues.values()) {
-                if (entry.state == FlowState.OPEN) {
-                    wakeWaiters(entry);
-                }
-            }
+            wakeEligibleWaiters();
         } else if (transition == FlowTransition.TO_BLOCKED) {
-            totalTransitionsToBlocked.incrementAndGet();
-            log.debug("GlobalMemoryGuard transitioned to BLOCKED");
+            metrics.recordBlocked();
+            log.debug("GlobalMemoryGuard transitioned to BLOCKED: {}", globalMemoryGuard.currentBlockReason());
         }
+    }
+
+    public void wakeEligibleWaiters() {
+        if (isGlobalBlocked()) {
+            return;
+        }
+
+        wakeWaiters(globalWaiters);
+
+        for (QueueFlowEntry entry : queues.values()) {
+            if (entry.state == FlowState.OPEN && !entry.waiters.isEmpty()) {
+                wakeWaiters(entry.waiters);
+            }
+        }
+    }
+
+    public boolean isGlobalBlocked() {
+        return globalMemoryGuard.isBlocked();
+    }
+
+    public String globalBlockReason() {
+        return globalMemoryGuard.currentBlockReason();
+    }
+
+    public GlobalMemoryGuard globalMemoryGuard() {
+        return globalMemoryGuard;
     }
 
     public void onQueueDeleted(String queuePath) {
         QueueFlowEntry removed = queues.remove(queuePath);
         if (removed != null) {
-            wakeWaiters(removed);
+            wakeWaiters(removed.waiters);
         }
     }
 
     public void recordOverdueRejection() {
-        overdueTimeoutRejections.incrementAndGet();
+        metrics.recordOverdueRejection();
     }
 
     public void checkOverdueGates() {
         long now = System.currentTimeMillis();
+
+        if (!isGlobalBlocked()) {
+            wakeEligibleWaiters();
+        }
+
         for (QueueFlowEntry entry : queues.values()) {
-            if (entry.state == FlowState.BLOCKED) {
-                long effectiveTimeout = entry.maxBlockMs > 0 ? entry.maxBlockMs : defaultMaxBlockMs;
-                if (effectiveTimeout > 0) {
-                    for (FlowGate gate : entry.waiters) {
-                        long pausedAt = gate.pausedAtTimestamp();
-                        if (pausedAt > 0 && (now - pausedAt) >= effectiveTimeout) {
-                            gate.notifyOverdue();
-                        }
-                    }
-                }
+            long effectiveTimeout = entry.maxBlockMs > 0 ? entry.maxBlockMs : defaultMaxBlockMs;
+            if (entry.state == FlowState.BLOCKED || isGlobalBlocked()) {
+                checkOverdueWaiters(entry.waiters, effectiveTimeout, now);
+            }
+        }
+        if (isGlobalBlocked()) {
+            checkOverdueWaiters(globalWaiters, defaultMaxBlockMs, now);
+        }
+    }
+
+    private static void checkOverdueWaiters(Set<FlowGate> waiters, long timeoutMs, long now) {
+        if (timeoutMs <= 0 || waiters.isEmpty()) {
+            return;
+        }
+        for (FlowGate gate : waiters) {
+            long pausedAt = gate.pausedAtTimestamp();
+            if (pausedAt > 0 && (now - pausedAt) >= timeoutMs) {
+                gate.notifyOverdue();
             }
         }
     }
 
-    private void wakeWaiters(QueueFlowEntry entry) {
-        if (entry.waiters.isEmpty()) {
+    private void wakeWaiters(Set<FlowGate> waitersSet) {
+        if (waitersSet == null || waitersSet.isEmpty()) {
             return;
         }
 
-        List<FlowGate> waitersToWake = new ArrayList<>(entry.waiters);
-        entry.waiters.clear();
-
-        for (int i = 0; i < waitersToWake.size(); i += resumeBatch) {
-            int end = Math.min(i + resumeBatch, waitersToWake.size());
-            List<FlowGate> batch = new ArrayList<>(waitersToWake.subList(i, end));
-            resumeExecutor.submit(() -> {
-                for (FlowGate gate : batch) {
-                    try {
-                        if (!isGateBlockedOnAnyOtherQueue(gate)) {
-                            gate.resume();
-                        }
-                    } catch (Throwable t) {
-                        log.warn("Error while resuming flow gate: {}", t.getMessage());
-                    }
-                }
-            });
+        List<FlowGate> batch = new ArrayList<>(resumeBatch);
+        Iterator<FlowGate> it = waitersSet.iterator();
+        while (it.hasNext() && batch.size() < resumeBatch) {
+            FlowGate gate = it.next();
+            it.remove();
+            batch.add(gate);
         }
+
+        if (batch.isEmpty()) {
+            return;
+        }
+
+        resumeExecutor.submit(() -> {
+            for (FlowGate gate : batch) {
+                try {
+                    if (isGateBlockedOnAnyOtherQueue(gate)) {
+                        waitersSet.add(gate);
+                    } else {
+                        gate.resume();
+                    }
+                } catch (Throwable t) {
+                    log.warn("Error while resuming flow gate: {}", t.getMessage());
+                }
+            }
+        });
     }
 
     private boolean isGateBlockedOnAnyOtherQueue(FlowGate gate) {
@@ -195,38 +228,22 @@ public class QueueFlowController implements AutoCloseable {
     }
 
     public long totalTransitionsToBlocked() {
-        return totalTransitionsToBlocked.get();
+        return metrics.totalTransitionsToBlocked();
     }
 
     public long totalTransitionsToOpen() {
-        return totalTransitionsToOpen.get();
+        return metrics.totalTransitionsToOpen();
     }
 
     public long overdueTimeoutRejections() {
-        return overdueTimeoutRejections.get();
+        return metrics.overdueTimeoutRejections();
     }
 
     @Override
     @PreDestroy
     public void close() {
-        timeoutScheduler.shutdownNow();
+        timeoutScheduler.close();
         resumeExecutor.shutdown();
-        log.info("""
-                =======================================================
-                [Flow Control Shutdown] Statistics:
-                  - Total queue transitions to BLOCKED : {}
-                  - Total queue transitions to OPEN    : {}
-                  - Overdue timeout rejections         : {}
-                =======================================================""",
-                totalTransitionsToBlocked.get(),
-                totalTransitionsToOpen.get(),
-                overdueTimeoutRejections.get()
-        );
-    }
-
-    private static final class QueueFlowEntry {
-        volatile FlowState state = FlowState.OPEN;
-        volatile long maxBlockMs = 0;
-        final Set<FlowGate> waiters = ConcurrentHashMap.newKeySet();
+        metrics.logShutdownSummary();
     }
 }

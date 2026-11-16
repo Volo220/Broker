@@ -5,47 +5,40 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 
 @ConfigurationProperties(prefix = "broker.flow-control")
 public record FlowControlProperties(
-        @DefaultValue("true") boolean enabled,
-        @DefaultValue Defaults defaults,
+        @DefaultValue("false") boolean enabled,
+        @DefaultValue("0") long maxBlockMs,
         @DefaultValue Global global,
         @DefaultValue("64") int resumeBatch
 ) {
     public FlowControlProperties {
-        if (defaults == null) {
-            defaults = new Defaults(10000, 5000, 67108864L, 33554432L, 0L);
+        if (maxBlockMs < 0) {
+            maxBlockMs = 0L;
         }
         if (global == null) {
-            global = new Global(1073741824L, 805306368L);
+            global = new Global(0.40, 0.75, 0.80, 256L, 500L);
         }
         if (resumeBatch <= 0) {
             resumeBatch = 64;
         }
     }
 
-    public record Defaults(
-            @DefaultValue("10000") int highWatermarkMessages,
-            @DefaultValue("5000") int lowWatermarkMessages,
-            @DefaultValue("67108864") long highWatermarkBytes,
-            @DefaultValue("33554432") long lowWatermarkBytes,
-            @DefaultValue("0") long maxBlockMs
-    ) {
-        public Defaults {
-            if (highWatermarkMessages < 0) highWatermarkMessages = 10000;
-            if (lowWatermarkMessages < 0) lowWatermarkMessages = 5000;
-            if (highWatermarkBytes < 0) highWatermarkBytes = 67108864L;
-            if (lowWatermarkBytes < 0) lowWatermarkBytes = 33554432L;
-            if (maxBlockMs < 0) maxBlockMs = 0L;
-        }
-    }
-
     public record Global(
-            @DefaultValue("1073741824") long highBytes,
-            @DefaultValue("805306368") long lowBytes
+            @DefaultValue("0.40") double highRatio,
+            @DefaultValue("0.75") double lowRatioFactor,
+            @DefaultValue("0.80") double heapPressureThreshold,
+            @DefaultValue("256") long minFreeOsMb,
+            @DefaultValue("500") long checkIntervalMs
     ) {
         public Global {
-            if (highBytes <= 0) highBytes = 1073741824L;
-            if (lowBytes <= 0) lowBytes = 805306368L;
+            if (highRatio <= 0.0 || highRatio >= 1.0) highRatio = 0.40;
+            if (lowRatioFactor <= 0.0 || lowRatioFactor >= 1.0) lowRatioFactor = 0.75;
+            if (heapPressureThreshold <= 0.0 || heapPressureThreshold > 1.0) heapPressureThreshold = 0.80;
+            if (minFreeOsMb < 0) minFreeOsMb = 256;
+            if (checkIntervalMs <= 0) checkIntervalMs = 500;
+        }
+
+        public long minFreeOsBytes() {
+            return minFreeOsMb * 1024L * 1024L;
         }
     }
 }
-

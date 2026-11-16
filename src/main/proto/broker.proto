@@ -64,6 +64,8 @@ enum ErrorCode {
   RESOURCE_EXHAUSTED = 9;
 }
 
+// Deprecated: to be removed in the future.
+// Per-queue flow control settings are ignored by the broker. Flow control is managed globally by the broker.
 message FlowControlPolicy {
   bool enabled = 1;
   int32 high_watermark_messages = 2;
@@ -127,7 +129,9 @@ message QueueSettings {
   QueueLifecyclePolicy lifecycle_policy = 6;
   QueueCapacityPolicy capacity_policy = 7;
   DispatchPolicy dispatch_policy = 8;
-  FlowControlPolicy flow_control_policy = 9;
+  // Deprecated: to be removed in the future. Client cannot configure flow control;
+  // broker ignores this setting and manages flow control internally/globally.
+  FlowControlPolicy flow_control_policy = 9 [deprecated = true];
 }
 
 message FlowControlNotice {

@@ -18,7 +18,7 @@ class QueueFlowControllerTest {
 
     @BeforeEach
     void setUp() {
-        FlowControlProperties props = new FlowControlProperties(true, null, null, 16);
+        FlowControlProperties props = new FlowControlProperties(true, 0L, null, 16);
         globalMemoryGuard = new GlobalMemoryGuard(props);
         controller = new QueueFlowController(globalMemoryGuard, props);
     }
@@ -126,6 +126,56 @@ class QueueFlowControllerTest {
         controller.checkOverdueGates();
 
         assertThat(gate.overdueNotified.get()).isTrue();
+    }
+
+    @Test
+    @DisplayName("wakeEligibleWaiters resumes parked gates when guard is open")
+    void wakeEligibleWaiters_resumesWaiters() throws InterruptedException {
+        // Artificially block global guard
+        globalMemoryGuard.updateExternalPressure(true, "TEST_PRESSURE");
+        assertThat(controller.isGlobalBlocked()).isTrue();
+
+        CountDownLatch latch = new CountDownLatch(2);
+        TestFlowGate gate1 = new TestFlowGate(latch);
+        TestFlowGate gate2 = new TestFlowGate(latch);
+
+        controller.park(gate1, List.of("q.active"));
+        controller.park(gate2, null); // global waiter
+
+        assertThat(gate1.resumed.get()).isFalse();
+        assertThat(gate2.resumed.get()).isFalse();
+
+        // Release global pressure
+        globalMemoryGuard.updateExternalPressure(false, "");
+        assertThat(controller.isGlobalBlocked()).isFalse();
+
+        // Calling wakeEligibleWaiters should resume both
+        controller.wakeEligibleWaiters();
+
+        boolean finished = latch.await(2, TimeUnit.SECONDS);
+        assertThat(finished).isTrue();
+        assertThat(gate1.resumed.get()).isTrue();
+        assertThat(gate2.resumed.get()).isTrue();
+    }
+
+    @Test
+    @DisplayName("checkOverdueGates proactively wakes eligible waiters when unblocked")
+    void checkOverdueGates_proactivelyWakesEligibleWaiters() throws InterruptedException {
+        globalMemoryGuard.updateExternalPressure(true, "TEST_PRESSURE");
+
+        CountDownLatch latch = new CountDownLatch(1);
+        TestFlowGate gate = new TestFlowGate(latch);
+        controller.park(gate, List.of("idle.queue"));
+
+        // Release pressure
+        globalMemoryGuard.updateExternalPressure(false, "");
+
+        // Next background tick or direct call should proactively wake it
+        controller.checkOverdueGates();
+
+        boolean finished = latch.await(2, TimeUnit.SECONDS);
+        assertThat(finished).isTrue();
+        assertThat(gate.resumed.get()).isTrue();
     }
 
     private static class TestFlowGate implements FlowGate {

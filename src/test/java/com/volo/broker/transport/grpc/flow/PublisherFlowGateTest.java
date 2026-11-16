@@ -32,7 +32,7 @@ class PublisherFlowGateTest {
     void setUp() {
         serverCall = mock(ServerCallStreamObserver.class);
         responseObserver = mock(StreamObserver.class);
-        FlowControlProperties props = new FlowControlProperties(true, null, null, 16);
+        FlowControlProperties props = new FlowControlProperties(true, 0L, null, 16);
         GlobalMemoryGuard guard = new GlobalMemoryGuard(props);
         flowController = new QueueFlowController(guard, props);
 

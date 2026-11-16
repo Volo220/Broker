@@ -35,22 +35,5 @@ public record FlowControlPolicy(
     public static FlowControlPolicy disabled() {
         return new FlowControlPolicy(false, 0, 0, 0, 0, 0);
     }
-
-    public static FlowControlPolicy fromBrokerDefaults(
-            int highWatermarkMessages,
-            int lowWatermarkMessages,
-            long highWatermarkBytes,
-            long lowWatermarkBytes,
-            long maxBlockMs
-    ) {
-        return new FlowControlPolicy(
-                true,
-                highWatermarkMessages,
-                lowWatermarkMessages,
-                highWatermarkBytes,
-                lowWatermarkBytes,
-                maxBlockMs
-        );
-    }
 }
 

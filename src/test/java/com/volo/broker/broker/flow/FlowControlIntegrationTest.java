@@ -55,7 +55,7 @@ class FlowControlIntegrationTest {
         messageStore = mock(MessageStore.class);
         scheduler = mock(QueueDispatchScheduler.class);
 
-        FlowControlProperties props = new FlowControlProperties(true, null, null, 16);
+        FlowControlProperties props = new FlowControlProperties(true, 0L, null, 16);
         memoryGuard = new GlobalMemoryGuard(props);
         flowController = new QueueFlowController(memoryGuard, props);
 

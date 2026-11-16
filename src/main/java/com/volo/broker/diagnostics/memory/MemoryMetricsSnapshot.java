@@ -16,8 +16,46 @@ public record MemoryMetricsSnapshot(
         long gcTimeMs,
         long brokerReadyBytes,
         int totalQueues,
-        int liveThreads
+        int liveThreads,
+        long osFreeMemoryBytes,
+        long osTotalMemoryBytes
 ) {
+    public MemoryMetricsSnapshot(
+            Instant timestamp,
+            long uptimeSec,
+            long heapUsedBytes,
+            long heapCommittedBytes,
+            long heapMaxBytes,
+            long oldGenUsedBytes,
+            long oldGenAfterGcBytes,
+            long directMemoryUsedBytes,
+            long directMemoryCapacityBytes,
+            long gcCount,
+            long gcTimeMs,
+            long brokerReadyBytes,
+            int totalQueues,
+            int liveThreads
+    ) {
+        this(
+                timestamp,
+                uptimeSec,
+                heapUsedBytes,
+                heapCommittedBytes,
+                heapMaxBytes,
+                oldGenUsedBytes,
+                oldGenAfterGcBytes,
+                directMemoryUsedBytes,
+                directMemoryCapacityBytes,
+                gcCount,
+                gcTimeMs,
+                brokerReadyBytes,
+                totalQueues,
+                liveThreads,
+                -1L,
+                -1L
+        );
+    }
+
     public double heapUsedMb() {
         return toMb(heapUsedBytes);
     }
@@ -50,6 +88,14 @@ public record MemoryMetricsSnapshot(
         return toMb(brokerReadyBytes);
     }
 
+    public double osFreeMemoryMb() {
+        return toMb(osFreeMemoryBytes);
+    }
+
+    public double osTotalMemoryMb() {
+        return toMb(osTotalMemoryBytes);
+    }
+
     private static double toMb(long bytes) {
         if (bytes < 0) {
             return -1.0;
@@ -57,4 +103,3 @@ public record MemoryMetricsSnapshot(
         return Math.round((bytes / (1024.0 * 1024.0)) * 10.0) / 10.0;
     }
 }
-

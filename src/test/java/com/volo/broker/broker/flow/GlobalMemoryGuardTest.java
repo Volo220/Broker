@@ -11,11 +11,7 @@ class GlobalMemoryGuardTest {
     @Test
     @DisplayName("recordBytesAdded and removed follow hysteresis between high and low limits")
     void globalGuardHysteresis() {
-        FlowControlProperties.Global global = new FlowControlProperties.Global(1000L, 500L);
-        FlowControlProperties.Defaults defaults = new FlowControlProperties.Defaults(100, 50, 1000, 500, 0);
-        FlowControlProperties props = new FlowControlProperties(true, defaults, global, 64);
-
-        GlobalMemoryGuard guard = new GlobalMemoryGuard(props);
+        GlobalMemoryGuard guard = new GlobalMemoryGuard(1000L, 500L);
         assertThat(guard.isBlocked()).isFalse();
         assertThat(guard.globalState()).isEqualTo(FlowState.OPEN);
 
@@ -50,7 +46,7 @@ class GlobalMemoryGuardTest {
     @Test
     @DisplayName("disabled flow control never blocks")
     void disabledGuardNeverBlocks() {
-        FlowControlProperties props = new FlowControlProperties(false, null, null, 64);
+        FlowControlProperties props = new FlowControlProperties(false, 0L, null, 64);
         GlobalMemoryGuard guard = new GlobalMemoryGuard(props);
 
         FlowTransition t1 = guard.recordBytesAdded(10_000_000_000L);
