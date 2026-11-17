@@ -1,4 +1,8 @@
 broker:
+  memory:
+    payload:
+      mode: HEAP
+      inline-threshold-bytes: 256
   aol:
     base-dir: target/test-data/aol
   flow-control:

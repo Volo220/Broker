@@ -1,13 +1,16 @@
-package com.volo.broker.broker.message;
-
-import com.google.protobuf.ByteString;
+package com.volo.broker.buffer;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
+/**
+ * Immutable heap-allocated {@link Payload} backed by a byte array.
+ */
 public final class ByteArrayPayload implements Payload {
+
+    public static final ByteArrayPayload EMPTY = new ByteArrayPayload(new byte[0], true);
 
     private final byte[] bytes;
 
@@ -22,11 +25,6 @@ public final class ByteArrayPayload implements Payload {
     @Override
     public int size() {
         return bytes.length;
-    }
-
-    @Override
-    public ByteString toByteString() {
-        return ByteString.copyFrom(bytes);
     }
 
     @Override
@@ -57,9 +55,6 @@ public final class ByteArrayPayload implements Payload {
         }
         if (o instanceof Payload other) {
             if (this.size() != other.size()) return false;
-            if (other instanceof ByteStringPayload bsp) {
-                return bsp.toByteString().equals(this.toByteString());
-            }
             return Arrays.equals(this.bytes, other.toByteArray());
         }
         return false;
@@ -67,7 +62,7 @@ public final class ByteArrayPayload implements Payload {
 
     @Override
     public int hashCode() {
-        return toByteString().hashCode();
+        return Arrays.hashCode(bytes);
     }
 
     @Override
@@ -75,4 +70,3 @@ public final class ByteArrayPayload implements Payload {
         return "ByteArrayPayload[size=" + size() + "]";
     }
 }
-

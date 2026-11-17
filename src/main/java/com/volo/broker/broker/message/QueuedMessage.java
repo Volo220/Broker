@@ -1,5 +1,7 @@
 package com.volo.broker.broker.message;
 
+import com.volo.broker.buffer.Payload;
+
 import java.util.Map;
 
 import lombok.Getter;

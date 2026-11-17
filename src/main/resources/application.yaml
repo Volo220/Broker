@@ -35,6 +35,11 @@ broker:
       timeout-ms: 30000
       check-period-ms: 5000
 
+  memory:
+    payload:
+      mode: HEAP
+      inline-threshold-bytes: 256
+
   memory-sampler:
     enabled: true
     sample-interval-ms: 1000

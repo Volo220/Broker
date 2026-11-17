@@ -6,12 +6,13 @@ import com.custombroker.grpc.PublishAction;
 import com.custombroker.grpc.PublishAck;
 import com.custombroker.grpc.PublishNack;
 import com.custombroker.grpc.PublisherResponse;
+import com.google.protobuf.ByteString;
 import com.volo.broker.broker.command.model.PublishCommand;
 import com.volo.broker.broker.command.model.PublishResult;
 import com.volo.broker.broker.error.BrokerErrorCode;
 import com.volo.broker.broker.error.BrokerException;
-import com.volo.broker.broker.message.Payload;
 import com.volo.broker.broker.message.QueuedMessage;
+import com.volo.broker.buffer.Payload;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -29,10 +30,14 @@ public final class GrpcMessageConverters {
     public static PublishCommand toPublishCommand(PublishAction action) {
         validatePublishAction(action);
 
+        Payload payload = action.getPayload() == null || action.getPayload().isEmpty()
+                ? Payload.empty()
+                : Payload.wrap(action.getPayload().toByteArray());
+
         return new PublishCommand(
                 action.getClientPublishId(),
                 action.getRoutingKey(),
-                Payload.of(action.getPayload()),
+                payload,
                 sanitizeHeaders(action.getHeadersMap())
         );
     }
@@ -74,9 +79,11 @@ public final class GrpcMessageConverters {
     }
 
     public static Message toProtoMessage(QueuedMessage message) {
+        ByteString payloadBytes = ByteString.copyFrom(message.getPayload().asReadOnlyByteBuffer());
+
         Message.Builder builder = Message.newBuilder()
                 .setId(message.getMessageId())
-                .setPayload(message.getPayload().toByteString())
+                .setPayload(payloadBytes)
                 .setTimestamp(message.getCreatedAt())
                 .putAllHeaders(message.getHeaders());
 

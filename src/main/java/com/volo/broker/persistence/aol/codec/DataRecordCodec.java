@@ -1,7 +1,7 @@
 package com.volo.broker.persistence.aol.codec;
 
-import com.volo.broker.broker.message.Payload;
 import com.volo.broker.broker.message.QueuedMessage;
+import com.volo.broker.buffer.Payload;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;

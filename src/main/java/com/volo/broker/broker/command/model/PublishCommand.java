@@ -1,7 +1,7 @@
 package com.volo.broker.broker.command.model;
 
 import com.volo.broker.broker.command.TransportCommand;
-import com.volo.broker.broker.message.Payload;
+import com.volo.broker.buffer.Payload;
 
 import java.util.Map;
 
