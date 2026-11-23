@@ -17,14 +17,24 @@ public class QueueDeclarationService {
     private final QueueManager queueManager;
     private final QueuePathValidator queuePathValidator;
     private final QueuePersistenceService persistenceService;
-    private final QueueFlowController flowController;
+    private final @Nullable MessageLifecycleService lifecycleService;
+    private final @Nullable QueueFlowController flowController;
 
     public QueueDeclarationService(
             QueueManager queueManager,
             QueuePathValidator queuePathValidator,
             QueuePersistenceService persistenceService
     ) {
-        this(queueManager, queuePathValidator, persistenceService, null);
+        this(queueManager, queuePathValidator, persistenceService, null, null);
+    }
+
+    public QueueDeclarationService(
+            QueueManager queueManager,
+            QueuePathValidator queuePathValidator,
+            QueuePersistenceService persistenceService,
+            @Nullable QueueFlowController flowController
+    ) {
+        this(queueManager, queuePathValidator, persistenceService, null, flowController);
     }
 
     @Autowired
@@ -32,11 +42,13 @@ public class QueueDeclarationService {
             QueueManager queueManager,
             QueuePathValidator queuePathValidator,
             QueuePersistenceService persistenceService,
+            @Nullable MessageLifecycleService lifecycleService,
             @Nullable QueueFlowController flowController
     ) {
         this.queueManager = Objects.requireNonNull(queueManager);
         this.queuePathValidator = Objects.requireNonNull(queuePathValidator);
         this.persistenceService = Objects.requireNonNull(persistenceService);
+        this.lifecycleService = lifecycleService;
         this.flowController = flowController;
     }
 
@@ -52,6 +64,7 @@ public class QueueDeclarationService {
             persistenceService.saveQueueIfDurable(queue);
             return queue;
         } catch (Throwable throwable) {
+            drainQueue(queue);
             queueManager.delete(queuePath);
             throw throwable;
         }
@@ -60,12 +73,21 @@ public class QueueDeclarationService {
     public void delete(String rawQueuePath) {
         QueuePath queuePath = queuePathValidator.validateAndParse(rawQueuePath);
 
-        queueManager.require(queuePath.value());
+        BrokerQueue queue = queueManager.require(queuePath.value());
+        drainQueue(queue);
 
         persistenceService.deleteQueue(queuePath.value());
         queueManager.delete(queuePath);
         if (flowController != null) {
             flowController.onQueueDeleted(queuePath.value());
+        }
+    }
+
+    private void drainQueue(BrokerQueue queue) {
+        if (lifecycleService != null) {
+            for (var message : queue.drainAll()) {
+                lifecycleService.discard(message);
+            }
         }
     }
 }

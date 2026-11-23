@@ -129,4 +129,9 @@ public class DefaultSubscriptionManager implements SubscriptionManager {
             return !subscriptions.isEmpty();
         }
     }
+
+    @Override
+    public java.util.Collection<Subscription> all() {
+        return List.copyOf(byConsumer.values());
+    }
 }

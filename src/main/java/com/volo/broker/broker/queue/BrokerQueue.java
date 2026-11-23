@@ -41,46 +41,60 @@ public final class BrokerQueue {
         Objects.requireNonNull(message, "message must not be null");
 
         List<QueuedMessage> dropped = applyOverflowPolicy(message);
+        try {
+            message.retain();
+            messages.addLast(message);
+            totalBytes += message.sizeBytes();
+            touch();
 
-        messages.addLast(message);
-        totalBytes += message.sizeBytes();
-        touch();
-
-        FlowTransition transition = evaluateTransition();
-
-        return dropped.isEmpty()
-                ? EnqueueResult.ofAccepted(transition)
-                : EnqueueResult.ofAcceptedWithDropped(dropped, transition);
+            FlowTransition transition = evaluateTransition();
+            return dropped.isEmpty()
+                    ? EnqueueResult.ofAccepted(transition)
+                    : EnqueueResult.ofAcceptedWithDropped(dropped, transition);
+        } catch (Throwable t) {
+            for (int i = dropped.size() - 1; i >= 0; i--) {
+                QueuedMessage msg = dropped.get(i);
+                messages.addFirst(msg);
+                totalBytes += msg.sizeBytes();
+            }
+            throw t;
+        }
     }
 
     public synchronized PollResult poll() {
         QueuedMessage message = messages.pollFirst();
-
         if (message == null) {
             return PollResult.empty();
         }
 
         totalBytes -= message.sizeBytes();
         touch();
-
-        FlowTransition transition = evaluateTransition();
-
-        return PollResult.of(message, transition);
+        return PollResult.of(message, evaluateTransition());
     }
 
     public synchronized boolean canAccept(QueuedMessage message) {
         Objects.requireNonNull(message, "message must not be null");
-        if (!settings.capacityPolicy().limited()) {
-            return true;
-        }
-        if (!capacityExceededAfterAdding(message)) {
+        if (!settings.capacityPolicy().limited() || !capacityExceededAfterAdding(message)) {
             return true;
         }
         QueueCapacityPolicy policy = settings.capacityPolicy();
-        if (policy.overflowPolicy() == OverflowPolicy.DROP_OLDEST) {
-            return policy.maxBytes() <= 0 || message.sizeBytes() <= policy.maxBytes();
-        }
-        return false;
+        return policy.overflowPolicy() == OverflowPolicy.DROP_OLDEST
+                && (policy.maxBytes() <= 0 || message.sizeBytes() <= policy.maxBytes());
+    }
+
+    public boolean isExpired(QueuedMessage message, long currentTimeMillis) {
+        Objects.requireNonNull(message, "message must not be null");
+        return settings.retentionPolicy().expired(message.getCreatedAt(), currentTimeMillis);
+    }
+
+    public boolean isExpired(QueuedMessage message) {
+        return isExpired(message, System.currentTimeMillis());
+    }
+
+    public boolean canRedeliver(QueuedMessage message) {
+        Objects.requireNonNull(message, "message must not be null");
+        return settings.redeliveryPolicy().enabled()
+                && message.getDeliveryAttempt() < settings.redeliveryPolicy().maxAttempts();
     }
 
     public synchronized FlowTransition requeue(QueuedMessage message) {
@@ -107,6 +121,18 @@ public final class BrokerQueue {
 
     public synchronized void touch() {
         lastActivityAt = System.currentTimeMillis();
+    }
+
+    public synchronized List<QueuedMessage> drainAll() {
+        if (messages.isEmpty()) {
+            return List.of();
+        }
+        List<QueuedMessage> drained = new ArrayList<>(messages);
+        messages.clear();
+        totalBytes = 0;
+        touch();
+        evaluateTransition();
+        return drained;
     }
 
     //#region getters
@@ -137,61 +163,42 @@ public final class BrokerQueue {
     //#endregion
 
     private List<QueuedMessage> applyOverflowPolicy(QueuedMessage incomingMessage) {
-        if (!settings.capacityPolicy().limited()) {
-            return List.of();
-        }
-
-        if (!capacityExceededAfterAdding(incomingMessage)) {
+        if (!settings.capacityPolicy().limited() || !capacityExceededAfterAdding(incomingMessage)) {
             return List.of();
         }
 
         return switch (settings.capacityPolicy().overflowPolicy()) {
-            case REJECT_PUBLISH -> throw new QueueOverflowException(
-                    "Queue capacity exceeded: " + queuePath()
-            );
-
-            case DROP_NEWEST -> throw new QueueOverflowException(
-                    "Incoming message was dropped because queue is full: " + queuePath()
-            );
-
+            case REJECT_PUBLISH -> throw new QueueOverflowException("Queue capacity exceeded: " + queuePath());
+            case DROP_NEWEST -> throw new QueueOverflowException("Incoming message was dropped because queue is full: " + queuePath());
             case DROP_OLDEST -> dropOldestUntilFits(incomingMessage);
         };
     }
 
     private boolean capacityExceededAfterAdding(QueuedMessage incomingMessage) {
         QueueCapacityPolicy policy = settings.capacityPolicy();
-
         if (!policy.limited()) {
             return false;
         }
 
-        boolean maxMessagesExceeded = policy.maxMessages() > 0
-                && messages.size() + 1 > policy.maxMessages();
-
-        boolean maxBytesExceeded = policy.maxBytes() > 0
-                && totalBytes + incomingMessage.sizeBytes() > policy.maxBytes();
-
+        boolean maxMessagesExceeded = policy.maxMessages() > 0 && messages.size() + 1 > policy.maxMessages();
+        boolean maxBytesExceeded = policy.maxBytes() > 0 && totalBytes + incomingMessage.sizeBytes() > policy.maxBytes();
         return maxMessagesExceeded || maxBytesExceeded;
     }
 
     private List<QueuedMessage> dropOldestUntilFits(QueuedMessage incomingMessage) {
-        List<QueuedMessage> droppedMessages = new ArrayList<>();
+        QueueCapacityPolicy policy = settings.capacityPolicy();
+        if (policy.maxBytes() > 0 && incomingMessage.sizeBytes() > policy.maxBytes()) {
+            throw new QueueOverflowException("Incoming message is too large for queue capacity: " + queuePath());
+        }
 
+        List<QueuedMessage> droppedMessages = new ArrayList<>();
         while (!messages.isEmpty() && capacityExceededAfterAdding(incomingMessage)) {
             QueuedMessage dropped = messages.pollFirst();
-
             if (dropped != null) {
                 totalBytes -= dropped.sizeBytes();
                 droppedMessages.add(dropped);
             }
         }
-
-        if (capacityExceededAfterAdding(incomingMessage)) {
-            throw new QueueOverflowException(
-                    "Incoming message is too large for queue capacity: " + queuePath()
-            );
-        }
-
         return droppedMessages;
     }
 

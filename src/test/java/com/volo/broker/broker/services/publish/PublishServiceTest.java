@@ -1,7 +1,8 @@
-package com.volo.broker.broker.services;
+package com.volo.broker.broker.services.publish;
 
 import com.volo.broker.TestQueueSettings;
 import com.volo.broker.broker.command.model.PublishCommand;
+import com.volo.broker.broker.dispatch.QueueDispatchScheduler;
 import com.volo.broker.broker.error.BrokerErrorCode;
 import com.volo.broker.broker.message.MessageIdGenerator;
 import com.volo.broker.broker.queue.InMemoryQueueManager;
@@ -9,8 +10,8 @@ import com.volo.broker.broker.queue.QueueManager;
 import com.volo.broker.broker.queue.settings.PublishAckMode;
 import com.volo.broker.broker.queue.settings.QueueSettings;
 import com.volo.broker.broker.router.QueuePath;
+import com.volo.broker.broker.services.MessageLifecycleService;
 import com.volo.broker.persistence.MessageStore;
-import com.volo.broker.broker.dispatch.QueueDispatchScheduler;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -43,7 +44,6 @@ class PublishServiceTest {
         var result = publishService.publish(command("orders.created"));
 
         assertThat(result.accepted()).isTrue();
-        // assertThat(result.messageId()).containsExactly(1L);
         assertThat(queueManager.require("orders.created").size()).isEqualTo(1);
 
         verify(messageStore).save(eq("orders.created"), any());
@@ -110,7 +110,6 @@ class PublishServiceTest {
         var result = publishService.publish(command("metrics.runtime"));
 
         assertThat(result.accepted()).isTrue();
-        // assertThat(result.responseRequired()).isFalse();
     }
 
     @Test
@@ -185,7 +184,7 @@ class PublishServiceTest {
 
         @Override
         public void initialize(long maxMessageId) {
-           value.set(maxMessageId);
+            value.set(maxMessageId);
         }
     }
 }

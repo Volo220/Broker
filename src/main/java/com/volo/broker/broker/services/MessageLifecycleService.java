@@ -16,23 +16,21 @@ public class MessageLifecycleService {
         this.messageStore = Objects.requireNonNull(messageStore);
     }
 
-    public boolean isExpired(BrokerQueue queue, QueuedMessage message) {
-        return queue.settings()
-                .retentionPolicy()
-                .expired(message.getCreatedAt(), System.currentTimeMillis());
-    }
-
-    public boolean canRedeliver(BrokerQueue queue, QueuedMessage message) {
-        if (!queue.settings().redeliveryPolicy().enabled()) {
-            return false;
-        }
-
-        return message.getDeliveryAttempt() < queue.settings().redeliveryPolicy().maxAttempts();
-    }
-
     public void complete(BrokerQueue queue, QueuedMessage message) {
-        if (queue.settings().persistenceMode() == PersistenceMode.PERSISTENT) {
-            messageStore.delete(message.getMessageId());
+        try {
+            if (queue != null && queue.settings().persistenceMode() == PersistenceMode.PERSISTENT) {
+                messageStore.delete(message.getMessageId());
+            }
+        } finally {
+            if (message != null) {
+                message.release();
+            }
+        }
+    }
+
+    public void discard(QueuedMessage message) {
+        if (message != null) {
+            message.release();
         }
     }
 }

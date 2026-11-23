@@ -55,11 +55,15 @@ public class ConsumerAcknowledgementService {
                         return;
                     }
 
-                    BrokerQueue queue = queueManager.require(subscription.queueName());
-                    lifecycleService.complete(queue, message);
-                    queue.touch();
-
-                    dispatchScheduler.signal(queue.queuePath());
+                    var maybeQueue = queueManager.find(subscription.queueName());
+                    if (maybeQueue.isPresent()) {
+                        BrokerQueue queue = maybeQueue.get();
+                        lifecycleService.complete(queue, message);
+                        queue.touch();
+                        dispatchScheduler.signal(queue.queuePath());
+                    } else {
+                        lifecycleService.discard(message);
+                    }
                 });
     }
 
@@ -71,9 +75,14 @@ public class ConsumerAcknowledgementService {
                         return;
                     }
 
-                    BrokerQueue queue = queueManager.require(subscription.queueName());
+                    var maybeQueue = queueManager.find(subscription.queueName());
+                    if (maybeQueue.isEmpty()) {
+                        lifecycleService.discard(message);
+                        return;
+                    }
 
-                    if (command.requeue() && lifecycleService.canRedeliver(queue, message)) {
+                    BrokerQueue queue = maybeQueue.get();
+                    if (command.requeue() && queue.canRedeliver(message)) {
                         FlowTransition transition = queue.requeue(message.asRedelivered());
                         if (flowController != null) {
                             flowController.handleTransition(queue.queuePath(), transition);

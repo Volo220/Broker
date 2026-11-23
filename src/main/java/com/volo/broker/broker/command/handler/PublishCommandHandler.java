@@ -3,7 +3,7 @@ package com.volo.broker.broker.command.handler;
 import com.volo.broker.broker.command.CommandHandler;
 import com.volo.broker.broker.command.model.PublishCommand;
 import com.volo.broker.broker.command.model.PublishResult;
-import com.volo.broker.broker.services.PublishService;
+import com.volo.broker.broker.services.publish.PublishService;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;

@@ -20,28 +20,6 @@ class MessageLifecycleServiceTest {
     private final MessageLifecycleService service = new MessageLifecycleService(messageStore);
 
     @Test
-    void isExpired_shouldReturnTrueWhenTtlExceeded() {
-        BrokerQueue queue = BrokerQueue.create(
-                QueuePath.of("orders.created"),
-                TestQueueSettings.withTtl(1)
-        );
-
-        assertThat(service.isExpired(queue, TestMessages.expiredMessage(1)))
-                .isTrue();
-    }
-
-    @Test
-    void isExpired_shouldReturnFalseWhenTtlDisabled() {
-        BrokerQueue queue = BrokerQueue.create(
-                QueuePath.of("orders.created"),
-                TestQueueSettings.reliable()
-        );
-
-        assertThat(service.isExpired(queue, TestMessages.expiredMessage(1)))
-                .isFalse();
-    }
-
-    @Test
     void complete_shouldDeletePersistentMessage() {
         BrokerQueue queue = BrokerQueue.create(
                 QueuePath.of("orders.created"),
@@ -66,99 +44,51 @@ class MessageLifecycleServiceTest {
     }
 
     @Test
-    void canRedeliver_shouldReturnTrueWhenAttemptsBelowLimit() {
+    void complete_shouldReleasePayloadEvenIfStoreThrows() {
         BrokerQueue queue = BrokerQueue.create(
                 QueuePath.of("orders.created"),
                 TestQueueSettings.reliable()
         );
-
-        assertThat(service.canRedeliver(queue, TestMessages.message(1)))
-                .isTrue();
-    }
-
-    @Test
-    void canRedeliver_shouldReturnFalseWhenRedeliveryDisabled() {
-        QueueSettings settings = new QueueSettings(
-                PersistenceMode.MEMORY_ONLY,
-                PublishAckMode.ENABLED,
-                ConsumerAckMode.NONE,
-                RedeliveryPolicy.disabled(),
-                MessageRetentionPolicy.disabled(),
-                QueueLifecyclePolicy.defaults(),
-                QueueCapacityPolicy.unlimited(),
-                DispatchPolicy.defaults()
-        );
-
-        BrokerQueue queue = BrokerQueue.create(
-                QueuePath.of("metrics.runtime"),
-                settings
-        );
-
-        assertThat(service.canRedeliver(queue, TestMessages.message(1)))
-                .isFalse();
-    }
-
-    @Test
-    void canRedeliver_shouldReturnFalseWhenMaxAttemptsReached() {
-        QueueSettings settings = new QueueSettings(
-                PersistenceMode.MEMORY_ONLY,
-                PublishAckMode.ENABLED,
-                ConsumerAckMode.ENABLED,
-                new RedeliveryPolicy(true, 2, true, true),
-                MessageRetentionPolicy.disabled(),
-                QueueLifecyclePolicy.defaults(),
-                QueueCapacityPolicy.unlimited(),
-                DispatchPolicy.defaults()
-        );
-
-        BrokerQueue queue = BrokerQueue.create(
-                QueuePath.of("orders.created"),
-                settings
-        );
-
+        com.volo.broker.buffer.TestCountingPayload payload =
+                new com.volo.broker.buffer.TestCountingPayload("data".getBytes(), 1);
         QueuedMessage message = new QueuedMessage(
                 1L,
-                "payload".getBytes(),
+                payload,
                 Map.of(),
                 "orders.created",
                 System.currentTimeMillis(),
-                true,
-                2
+                false,
+                0
         );
 
-        assertThat(service.canRedeliver(queue, message))
-                .isFalse();
+        doThrow(new RuntimeException("disk error")).when(messageStore).delete(1L);
+
+        try {
+            service.complete(queue, message);
+        } catch (RuntimeException ignored) {
+        }
+
+        assertThat(payload.refCnt()).isZero();
+        assertThat(payload.releaseCalls()).isEqualTo(1);
     }
 
     @Test
-    void canRedeliver_shouldReturnTrueWhenMaxAttemptsNotReached() {
-        QueueSettings settings = new QueueSettings(
-                PersistenceMode.MEMORY_ONLY,
-                PublishAckMode.ENABLED,
-                ConsumerAckMode.ENABLED,
-                new RedeliveryPolicy(true, 3, true, true),
-                MessageRetentionPolicy.disabled(),
-                QueueLifecyclePolicy.defaults(),
-                QueueCapacityPolicy.unlimited(),
-                DispatchPolicy.defaults()
-        );
-
-        BrokerQueue queue = BrokerQueue.create(
-                QueuePath.of("orders.created"),
-                settings
-        );
-
+    void discard_shouldReleasePayload() {
+        com.volo.broker.buffer.TestCountingPayload payload =
+                new com.volo.broker.buffer.TestCountingPayload("data".getBytes(), 1);
         QueuedMessage message = new QueuedMessage(
                 1L,
-                "payload".getBytes(),
+                payload,
                 Map.of(),
                 "orders.created",
                 System.currentTimeMillis(),
-                true,
-                2
+                false,
+                0
         );
 
-        assertThat(service.canRedeliver(queue, message))
-                .isTrue();
+        service.discard(message);
+
+        assertThat(payload.refCnt()).isZero();
+        assertThat(payload.releaseCalls()).isEqualTo(1);
     }
 }

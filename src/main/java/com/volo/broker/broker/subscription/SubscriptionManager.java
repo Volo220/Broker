@@ -1,5 +1,6 @@
 package com.volo.broker.broker.subscription;
 
+import java.util.Collection;
 import java.util.Optional;
 
 import com.volo.broker.broker.queue.settings.ConsumerSelectionStrategy;
@@ -11,4 +12,5 @@ public interface SubscriptionManager {
     Optional<Subscription> findByConsumerTag(String consumerTag);
     boolean hasAvailableSubscriber(String queueName);
     boolean hasSubscribers(String queueName);
+    Collection<Subscription> all();
 }

@@ -12,7 +12,7 @@ import com.volo.broker.broker.queue.QueueManager;
 import com.volo.broker.broker.router.QueuePath;
 import com.volo.broker.broker.services.ConsumerAcknowledgementService;
 import com.volo.broker.broker.services.MessageLifecycleService;
-import com.volo.broker.broker.services.PublishService;
+import com.volo.broker.broker.services.publish.PublishService;
 import com.volo.broker.broker.subscription.DefaultSubscriptionManager;
 import com.volo.broker.broker.subscription.SubscriptionManager;
 import com.volo.broker.persistence.MessageStore;

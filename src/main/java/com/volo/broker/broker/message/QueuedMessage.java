@@ -73,6 +73,17 @@ public final class QueuedMessage {
         return sizeBytes;
     }
 
+    public QueuedMessage retain() {
+        if (payload != null) {
+            payload.retain();
+        }
+        return this;
+    }
+
+    public boolean release() {
+        return payload != null && payload.release();
+    }
+
     private static int computeSizeBytes(Payload payload, Map<String, String> headers) {
         int headersBytes = 0;
         if (!headers.isEmpty()) {

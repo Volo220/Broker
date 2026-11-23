@@ -3,7 +3,16 @@ package com.volo.broker.broker.queue;
 import com.volo.broker.TestMessages;
 import com.volo.broker.TestQueueSettings;
 import com.volo.broker.broker.queue.exception.QueueOverflowException;
+import com.volo.broker.broker.queue.settings.ConsumerAckMode;
+import com.volo.broker.broker.queue.settings.DispatchPolicy;
+import com.volo.broker.broker.queue.settings.MessageRetentionPolicy;
 import com.volo.broker.broker.queue.settings.OverflowPolicy;
+import com.volo.broker.broker.queue.settings.PersistenceMode;
+import com.volo.broker.broker.queue.settings.PublishAckMode;
+import com.volo.broker.broker.queue.settings.QueueCapacityPolicy;
+import com.volo.broker.broker.queue.settings.QueueLifecyclePolicy;
+import com.volo.broker.broker.queue.settings.QueueSettings;
+import com.volo.broker.broker.queue.settings.RedeliveryPolicy;
 import com.volo.broker.broker.router.QueuePath;
 import org.junit.jupiter.api.Test;
 
@@ -125,5 +134,111 @@ class BrokerQueueTest {
                 queue.requeue(TestMessages.message(99).asRedelivered())
         );
         assertThat(queue.size()).isEqualTo(2);
+    }
+
+    @Test
+    void enqueue_dropOldest_whenIncomingMessageExceedsMaxBytes_shouldNotEvictExistingMessages() {
+        var capacityPolicy = new com.volo.broker.broker.queue.settings.QueueCapacityPolicy(
+                true,
+                10,
+                100L,
+                OverflowPolicy.DROP_OLDEST
+        );
+        var settings = new com.volo.broker.broker.queue.settings.QueueSettings(
+                PersistenceMode.MEMORY_ONLY,
+                PublishAckMode.ENABLED,
+                ConsumerAckMode.ENABLED,
+                RedeliveryPolicy.disabled(),
+                MessageRetentionPolicy.disabled(),
+                QueueLifecyclePolicy.defaults(),
+                capacityPolicy,
+                DispatchPolicy.defaults()
+        );
+        BrokerQueue queue = BrokerQueue.create(QueuePath.of("orders.drop-oldest"), settings);
+
+        var payload1 = new com.volo.broker.buffer.TestCountingPayload(new byte[50], 1);
+        var msg1 = new com.volo.broker.broker.message.QueuedMessage(
+                1L, payload1, java.util.Map.of(), "orders.drop-oldest", System.currentTimeMillis(), false, 0
+        );
+        queue.enqueue(msg1);
+
+        assertThat(queue.size()).isEqualTo(1);
+        // Initial ref (1) + queue.enqueue (+1) = 2
+        assertThat(payload1.refCnt()).isEqualTo(2);
+
+        var payload2 = new com.volo.broker.buffer.TestCountingPayload(new byte[150], 1);
+        var msg2 = new com.volo.broker.broker.message.QueuedMessage(
+                2L, payload2, java.util.Map.of(), "orders.drop-oldest", System.currentTimeMillis(), false, 0
+        );
+
+        assertThatThrownBy(() -> queue.enqueue(msg2))
+                .isInstanceOf(QueueOverflowException.class);
+
+        // Invariant check: msg1 MUST NOT have been evicted or lost!
+        // Queue size must still be 1, and msg1 payload must still be in the queue with refCnt=2!
+        assertThat(queue.size()).isEqualTo(1);
+        assertThat(payload1.refCnt()).isEqualTo(2);
+        assertThat(queue.poll().message()).hasValueSatisfying(m -> assertThat(m.getMessageId()).isEqualTo(1L));
+    }
+
+    @Test
+    void isExpired_shouldReturnTrueWhenTtlExceeded() {
+        BrokerQueue queue = BrokerQueue.create(
+                QueuePath.of("orders.created"),
+                TestQueueSettings.withTtl(1)
+        );
+
+        assertThat(queue.isExpired(TestMessages.expiredMessage(1))).isTrue();
+    }
+
+    @Test
+    void isExpired_shouldReturnFalseWhenTtlDisabled() {
+        BrokerQueue queue = BrokerQueue.create(
+                QueuePath.of("orders.created"),
+                TestQueueSettings.reliable()
+        );
+
+        assertThat(queue.isExpired(TestMessages.expiredMessage(1))).isFalse();
+    }
+
+    @Test
+    void canRedeliver_shouldReturnTrueWhenAttemptsBelowLimit() {
+        BrokerQueue queue = BrokerQueue.create(
+                QueuePath.of("orders.created"),
+                TestQueueSettings.reliable()
+        );
+
+        assertThat(queue.canRedeliver(TestMessages.message(1))).isTrue();
+    }
+
+    @Test
+    void canRedeliver_shouldReturnFalseWhenRedeliveryDisabled() {
+        BrokerQueue queue = BrokerQueue.create(
+                QueuePath.of("orders.created"),
+                TestQueueSettings.reliableWithRedeliveryDisabled()
+        );
+
+        assertThat(queue.canRedeliver(TestMessages.message(1))).isFalse();
+    }
+
+    @Test
+    void canRedeliver_shouldReturnFalseWhenMaxAttemptsReached() {
+        var settings = new QueueSettings(
+                PersistenceMode.MEMORY_ONLY,
+                PublishAckMode.ENABLED,
+                ConsumerAckMode.ENABLED,
+                new RedeliveryPolicy(true, 2, true, true),
+                MessageRetentionPolicy.disabled(),
+                QueueLifecyclePolicy.defaults(),
+                QueueCapacityPolicy.unlimited(),
+                DispatchPolicy.defaults()
+        );
+        BrokerQueue queue = BrokerQueue.create(QueuePath.of("orders.created"), settings);
+
+        var message = new com.volo.broker.broker.message.QueuedMessage(
+                1L, "payload".getBytes(), java.util.Map.of(), "orders.created", System.currentTimeMillis(), true, 2
+        );
+
+        assertThat(queue.canRedeliver(message)).isFalse();
     }
 }

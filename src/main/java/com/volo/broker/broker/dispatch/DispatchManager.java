@@ -51,46 +51,51 @@ public class DispatchManager {
         this.globalMemoryGuard = globalMemoryGuard;
     }
     
-     public void dispatchLoop(String queueName) {
+    public void dispatchLoop(String queueName) {
         while (true) {
-            var queue = queueManager.find(queueName).get();
-            Optional<Subscription> maybeSubscription = subscriptionManager.nextReady(
-                    queueName,
-                    queue.settings().dispatchPolicy().consumerSelectionStrategy()
-            );
-
-            if (maybeSubscription.isEmpty()) {
+            var maybeQueue = queueManager.find(queueName);
+            if (maybeQueue.isEmpty() || !dispatchOne(maybeQueue.get())) {
                 return;
             }
+        }
+    }
 
-            Subscription subscription = maybeSubscription.get();
+    private boolean dispatchOne(BrokerQueue queue) {
+        Optional<Subscription> maybeSubscription = subscriptionManager.nextReady(
+                queue.queuePath(),
+                queue.settings().dispatchPolicy().consumerSelectionStrategy()
+        );
 
-            if (!subscription.canAcceptMore()) {
-                return;
-            }
+        if (maybeSubscription.isEmpty() || !maybeSubscription.get().canAcceptMore()) {
+            return false;
+        }
 
-            PollResult pollResult = queue.poll();
-            QueuedMessage message = pollResult.messageOrNull();
-            if (message == null) {
-                return;
-            }
+        PollResult pollResult = queue.poll();
+        QueuedMessage message = pollResult.messageOrNull();
+        if (message == null) {
+            return false;
+        }
 
+        updateFlowOnPoll(queue, pollResult, message);
+
+        if (queue.isExpired(message)) {
+            lifecycleService.complete(queue, message);
+            return true;
+        }
+
+        dispatch(queue, maybeSubscription.get(), message);
+        return true;
+    }
+
+    private void updateFlowOnPoll(BrokerQueue queue, PollResult pollResult, QueuedMessage message) {
+        if (flowController != null) {
+            flowController.handleTransition(queue.queuePath(), pollResult.transition());
+        }
+        if (globalMemoryGuard != null) {
+            FlowTransition gt = globalMemoryGuard.recordBytesRemoved(message.sizeBytes());
             if (flowController != null) {
-                flowController.handleTransition(queue.queuePath(), pollResult.transition());
+                flowController.handleGlobalTransition(gt);
             }
-            if (globalMemoryGuard != null) {
-                FlowTransition gt = globalMemoryGuard.recordBytesRemoved(message.sizeBytes());
-                if (flowController != null) {
-                    flowController.handleGlobalTransition(gt);
-                }
-            }
-
-            if (lifecycleService.isExpired(queue, message)) {
-                lifecycleService.complete(queue, message);
-                continue;
-            }
-
-            dispatch(queue, subscription, message);
         }
     }
     private void dispatch(
@@ -120,7 +125,7 @@ public class DispatchManager {
             }
 
             boolean shouldRequeue = queue.settings().redeliveryPolicy().requeueOnSendFailure()
-                    && lifecycleService.canRedeliver(queue, message);
+                    && queue.canRedeliver(message);
 
             if (shouldRequeue) {
                 queue.requeue(message.asRedelivered());

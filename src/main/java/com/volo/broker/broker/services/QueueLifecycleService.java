@@ -15,23 +15,34 @@ import java.util.Objects;
 public class QueueLifecycleService {
     private final QueueManager queueManager;
     private final SubscriptionManager subscriptionManager;
-    private final QueueFlowController flowController;
+    private final @Nullable MessageLifecycleService lifecycleService;
+    private final @Nullable QueueFlowController flowController;
 
     public QueueLifecycleService(
             QueueManager queueManager,
             SubscriptionManager subscriptionManager
     ) {
-        this(queueManager, subscriptionManager, null);
+        this(queueManager, subscriptionManager, null, null);
+    }
+
+    public QueueLifecycleService(
+            QueueManager queueManager,
+            SubscriptionManager subscriptionManager,
+            @Nullable QueueFlowController flowController
+    ) {
+        this(queueManager, subscriptionManager, null, flowController);
     }
 
     @Autowired
     public QueueLifecycleService(
             QueueManager queueManager,
             SubscriptionManager subscriptionManager,
+            @Nullable MessageLifecycleService lifecycleService,
             @Nullable QueueFlowController flowController
     ) {
         this.queueManager = Objects.requireNonNull(queueManager);
         this.subscriptionManager = Objects.requireNonNull(subscriptionManager);
+        this.lifecycleService = lifecycleService;
         this.flowController = flowController;
     }
 
@@ -40,6 +51,11 @@ public class QueueLifecycleService {
 
         for (BrokerQueue queue : queueManager.all()) {
             if (shouldDelete(queue, now)) {
+                if (lifecycleService != null) {
+                    for (var message : queue.drainAll()) {
+                        lifecycleService.discard(message);
+                    }
+                }
                 queueManager.delete(queue.path());
                 if (flowController != null) {
                     flowController.onQueueDeleted(queue.queuePath());
