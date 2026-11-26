@@ -1,26 +1,30 @@
 package com.volo.broker.transport.grpc.service;
 
-import com.custombroker.grpc.PublisherRequest;
+import com.custombroker.grpc.PublishNack;
 import com.custombroker.grpc.PublisherResponse;
 import com.custombroker.grpc.PublisherServiceGrpc;
-import com.custombroker.grpc.PublishAction;
-import com.custombroker.grpc.PublishNack;
 import com.volo.broker.broker.command.CommandBus;
 import com.volo.broker.broker.command.model.PublishCommand;
 import com.volo.broker.broker.command.model.PublishResult;
 import com.volo.broker.broker.error.BrokerErrorCode;
 import com.volo.broker.broker.error.BrokerException;
 import com.volo.broker.broker.flow.QueueFlowController;
+import com.volo.broker.buffer.HeapPayloadAllocator;
+import com.volo.broker.config.GrpcPublisherProperties;
 import com.volo.broker.transport.grpc.SafeGrpcObserver;
+import com.volo.broker.transport.grpc.codec.inbound.PublisherFrame;
+import com.volo.broker.transport.grpc.codec.inbound.PublisherRequestMarshaller;
 import com.volo.broker.transport.grpc.connection.PublisherConnection;
 import com.volo.broker.transport.grpc.connection.PublisherConnectionRegistry;
 import com.volo.broker.transport.grpc.flow.PublisherFlowGate;
 import com.volo.broker.transport.grpc.mapper.GrpcErrorMapper;
 import com.volo.broker.transport.grpc.mapper.GrpcMessageConverters;
-
+import io.grpc.BindableService;
+import io.grpc.MethodDescriptor;
+import io.grpc.ServerServiceDefinition;
 import io.grpc.stub.ServerCallStreamObserver;
+import io.grpc.stub.ServerCalls;
 import io.grpc.stub.StreamObserver;
-
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,30 +35,52 @@ import java.util.List;
 import java.util.Objects;
 
 @Component
-public class GrpcPublisherService extends PublisherServiceGrpc.PublisherServiceImplBase {
+public class GrpcPublisherService implements BindableService {
     private static final Logger log = LoggerFactory.getLogger(GrpcPublisherService.class);
 
     private final CommandBus commandBus;
     private final PublisherConnectionRegistry registry;
     private final QueueFlowController flowController;
+    private final PublisherRequestMarshaller requestMarshaller;
 
     public GrpcPublisherService(CommandBus commandBus, PublisherConnectionRegistry registry) {
-        this(commandBus, registry, null);
+        this(commandBus, registry, null, new PublisherRequestMarshaller(new HeapPayloadAllocator(), GrpcPublisherProperties.defaults()));
+    }
+
+    public GrpcPublisherService(
+            CommandBus commandBus,
+            PublisherConnectionRegistry registry,
+            PublisherRequestMarshaller requestMarshaller
+    ) {
+        this(commandBus, registry, null, requestMarshaller);
     }
 
     @Autowired
     public GrpcPublisherService(
             CommandBus commandBus,
             PublisherConnectionRegistry registry,
-            @Nullable QueueFlowController flowController
+            @Nullable QueueFlowController flowController,
+            PublisherRequestMarshaller requestMarshaller
     ) {
         this.commandBus = Objects.requireNonNull(commandBus, "commandBus must not be null");
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
         this.flowController = flowController;
+        this.requestMarshaller = Objects.requireNonNull(requestMarshaller, "requestMarshaller must not be null");
     }
 
     @Override
-    public StreamObserver<PublisherRequest> openPublisherChannel(StreamObserver<PublisherResponse> responseObserver) {
+    public ServerServiceDefinition bindService() {
+        MethodDescriptor<PublisherFrame, PublisherResponse> method = PublisherServiceGrpc
+                .getOpenPublisherChannelMethod()
+                .toBuilder(requestMarshaller, PublisherServiceGrpc.getOpenPublisherChannelMethod().getResponseMarshaller())
+                .build();
+
+        return ServerServiceDefinition.builder(PublisherServiceGrpc.SERVICE_NAME)
+                .addMethod(method, ServerCalls.asyncBidiStreamingCall(this::openPublisherChannel))
+                .build();
+    }
+
+    public StreamObserver<PublisherFrame> openPublisherChannel(StreamObserver<PublisherResponse> responseObserver) {
         ServerCallStreamObserver<PublisherResponse> serverCall = responseObserver instanceof ServerCallStreamObserver<PublisherResponse> sco
                 ? sco
                 : null;
@@ -74,11 +100,11 @@ public class GrpcPublisherService extends PublisherServiceGrpc.PublisherServiceI
         return createStreamObserver(connection, gate);
     }
 
-    private StreamObserver<PublisherRequest> createStreamObserver(PublisherConnection connection, PublisherFlowGate gate) {
+    private StreamObserver<PublisherFrame> createStreamObserver(PublisherConnection connection, PublisherFlowGate gate) {
         return new StreamObserver<>() {
             @Override
-            public void onNext(PublisherRequest request) {
-                processRequestSafely(connection, gate, request);
+            public void onNext(PublisherFrame frame) {
+                processRequestSafely(connection, gate, frame);
             }
 
             @Override
@@ -93,20 +119,22 @@ public class GrpcPublisherService extends PublisherServiceGrpc.PublisherServiceI
         };
     }
 
-    private void processRequestSafely(PublisherConnection conn, PublisherFlowGate gate, PublisherRequest req) {
+    private void processRequestSafely(PublisherConnection conn, PublisherFlowGate gate, PublisherFrame frame) {
         if (conn.isClosed()) {
+            if (frame != null) frame.release();
             return;
         }
         conn.markSeen();
         List<String> routedQueues = List.of();
         try {
-            routedQueues = handleRequest(conn, req);
+            routedQueues = handleFrame(conn, frame);
         } catch (BrokerException exception) {
-            sendNackResponse(conn, getClientPublishId(req), GrpcErrorMapper.toProto(exception));
+            sendNackResponse(conn, getClientPublishId(frame), GrpcErrorMapper.toProto(exception));
         } catch (Throwable throwable) {
             log.error("Unexpected publisher request error", throwable);
-            sendNackResponse(conn, getClientPublishId(req), GrpcErrorMapper.internalError(throwable));
+            sendNackResponse(conn, getClientPublishId(frame), GrpcErrorMapper.internalError(throwable));
         } finally {
+            if (frame != null) frame.release();
             gate.afterRequestProcessed(routedQueues);
         }
     }
@@ -120,30 +148,34 @@ public class GrpcPublisherService extends PublisherServiceGrpc.PublisherServiceI
                 .build());
     }
 
-    private List<String> handleRequest(PublisherConnection connection, PublisherRequest request) {
-        if (request == null || request.getRequestCase() == PublisherRequest.RequestCase.REQUEST_NOT_SET) {
-            throw new BrokerException(BrokerErrorCode.INVALID_REQUEST, "Publisher request must contain one request type");
+    private List<String> handleFrame(PublisherConnection connection, PublisherFrame frame) {
+        if (frame == null) {
+            throw new BrokerException(BrokerErrorCode.INVALID_REQUEST, "Publisher frame must not be null");
         }
-
-        switch (request.getRequestCase()) {
-            case PUBLISH -> {
-                return handlePublish(connection, request.getPublish());
-            }
-            case PING -> {
-                connection.send(GrpcMessageConverters.toPongResponse());
-                return List.of();
-            }
-            case CLOSE -> {
-                closeConnection(connection);
-                return List.of();
-            }
-            case REQUEST_NOT_SET -> throw new BrokerException(BrokerErrorCode.INVALID_REQUEST, "Publisher request must contain one request type");
+        if (frame instanceof PublisherFrame.Invalid invalid) {
+            throw new BrokerException(BrokerErrorCode.INVALID_REQUEST, invalid.reason());
         }
-        return List.of();
+        if (frame instanceof PublisherFrame.Ping) {
+            connection.send(GrpcMessageConverters.toPongResponse());
+            return List.of();
+        }
+        if (frame instanceof PublisherFrame.Close) {
+            closeConnection(connection);
+            return List.of();
+        }
+        if (frame instanceof PublisherFrame.Publish pub) {
+            return handlePublish(connection, pub);
+        }
+        throw new BrokerException(BrokerErrorCode.INVALID_REQUEST, "Unknown publisher frame");
     }
 
-    private List<String> handlePublish(PublisherConnection connection, PublishAction action) {
-        Long clientPublishId = action.getClientPublishId();
+    private List<String> handlePublish(PublisherConnection connection, PublisherFrame.Publish pub) {
+        long clientPublishId = pub.clientPublishId();
+        if (pub.rejectCode() != null) {
+            PublishResult result = PublishResult.nack(clientPublishId, pub.rejectCode(), pub.rejectReason());
+            connection.send(GrpcMessageConverters.toPublisherResponse(result));
+            return List.of();
+        }
 
         if (connection.flowGate() != null && connection.flowGate().isOverdue()) {
             connection.flowGate().clearOverdue();
@@ -159,7 +191,7 @@ public class GrpcPublisherService extends PublisherServiceGrpc.PublisherServiceI
             return List.of();
         }
 
-        PublishCommand command = GrpcMessageConverters.toPublishCommand(action);
+        PublishCommand command = new PublishCommand(clientPublishId, pub.routingKey(), pub.payload(), pub.headers());
         try {
             PublishResult result = commandBus.execute(command);
             connection.send(GrpcMessageConverters.toPublisherResponse(result));
@@ -173,8 +205,6 @@ public class GrpcPublisherService extends PublisherServiceGrpc.PublisherServiceI
             PublishResult result = PublishResult.nack(clientPublishId, BrokerErrorCode.INTERNAL_ERROR, "Message was not accepted by broker");
             connection.send(GrpcMessageConverters.toPublisherResponse(result));
             return List.of();
-        } finally {
-            command.payload().release();
         }
     }
 
@@ -183,10 +213,10 @@ public class GrpcPublisherService extends PublisherServiceGrpc.PublisherServiceI
         connection.close();
     }
 
-    private static Long getClientPublishId(PublisherRequest request) {
-        if (request == null || request.getRequestCase() != PublisherRequest.RequestCase.PUBLISH) {
-            return 0L;
+    private static Long getClientPublishId(PublisherFrame frame) {
+        if (frame instanceof PublisherFrame.Publish pub) {
+            return pub.clientPublishId();
         }
-        return request.getPublish().getClientPublishId();
+        return 0L;
     }
 }

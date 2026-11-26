@@ -30,6 +30,15 @@ broker:
       timeout-ms: 30000
       check-period-ms: 5000
 
+  transport:
+    grpc:
+      publisher:
+        max-payload-bytes: 4194304
+        max-routing-key-length: 255
+        max-headers: 64
+        max-header-key-length: 128
+        max-header-value-length: 1024
+
   consumer:
     keep-alive:
       timeout-ms: 30000

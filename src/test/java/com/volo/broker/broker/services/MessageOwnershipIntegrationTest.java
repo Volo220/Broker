@@ -3,7 +3,6 @@ package com.volo.broker.broker.services;
 import com.volo.broker.TestQueueSettings;
 import com.volo.broker.broker.command.handler.DisconnectCommandHandler;
 import com.volo.broker.broker.command.model.AckCommand;
-import com.volo.broker.broker.command.model.DisconnectCommand;
 import com.volo.broker.broker.command.model.NackCommand;
 import com.volo.broker.broker.command.model.PublishCommand;
 import com.volo.broker.broker.command.model.PublishResult;
@@ -14,7 +13,6 @@ import com.volo.broker.broker.message.MessageDelivery;
 import com.volo.broker.broker.queue.InMemoryQueueManager;
 import com.volo.broker.broker.queue.QueueManager;
 import com.volo.broker.broker.queue.settings.OverflowPolicy;
-import com.volo.broker.broker.queue.settings.QueueCapacityPolicy;
 import com.volo.broker.broker.queue.settings.QueueSettings;
 import com.volo.broker.broker.router.QueuePath;
 import com.volo.broker.broker.services.publish.PublishService;
@@ -44,8 +42,6 @@ class MessageOwnershipIntegrationTest {
     private ConsumerAcknowledgementService ackService;
     private QueueDeclarationService declarationService;
     private BrokerShutdownDrainer shutdownDrainer;
-    private DisconnectCommandHandler disconnectHandler;
-
     @BeforeEach
     void setUp() {
         queueManager = new InMemoryQueueManager();
@@ -67,7 +63,7 @@ class MessageOwnershipIntegrationTest {
                 queueManager, new QueuePathValidator(), persistenceService, lifecycleService, null
         );
         shutdownDrainer = new BrokerShutdownDrainer(queueManager, subscriptionManager, lifecycleService);
-        disconnectHandler = new DisconnectCommandHandler(
+        new DisconnectCommandHandler(
                 subscriptionManager, queueManager, scheduler, lifecycleService
         );
     }
